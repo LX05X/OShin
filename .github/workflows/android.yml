@@ -141,14 +141,6 @@ jobs:
             | sed 's/[\\`*_()\[\]]/ /g' >> $GITHUB_ENV
           echo "EOF" >> $GITHUB_ENV
 
-      # 第 8 步：发送 Telegram 通知
-      - name: Send Notification to Telegram
-        uses: appleboy/telegram-action@master
-        with:
-          to: ${{ secrets.TELEGRAM_TO }} # Telegram 接收者的 Chat ID
-          token: ${{ secrets.TELEGRAM_TOKEN }} # Telegram Bot 的 Token
-          document: ${{ env.APK_FILE_V8A }} # 包含所有架构的 APK 文件
-          message: |
             🚀 **OShin New CI Build！**
 
             ${{ env.COMMIT_MSG }}
