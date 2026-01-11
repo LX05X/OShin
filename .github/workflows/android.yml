@@ -2,7 +2,6 @@ name: Android CI
 
 # 定义工作流的触发条件 - 修改为手动触发
 on:
-  # 移除 push 触发器
   workflow_dispatch: # 手动触发工作流
     # 可选：添加输入参数
     inputs:
@@ -69,24 +68,65 @@ jobs:
           KEY_ALIAS: ${{ secrets.ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
 
-      # 第 5 步：准备构建产物信息
+      # 第 5 步：准备构建产物信息 - 修复APK查找逻辑
       - name: Prepare Artifacts, Extract Version String, and Generate Summary
         id: artifacts
         run: |
+            echo "=== 开始查找APK文件 ==="
+            
             # 根据构建类型选择目录
             if [ "${{ github.event.inputs.build_type }}" = "debug" ]; then
               apk_dir="app/build/outputs/apk/debug"
-              apk_file_v8a=$(find "$apk_dir" -name '*debug*.apk' | head -1)
+              echo "查找Debug APK在目录: $apk_dir"
+              
+              # 列出目录内容
+              echo "目录内容:"
+              find "$apk_dir" -type f -name "*.apk" | while read file; do
+                echo "找到文件: $file"
+              done
+              
+              # 查找第一个.apk文件
+              apk_file_v8a=$(find "$apk_dir" -type f -name "*.apk" | head -1)
+              echo "选择的APK文件: $apk_file_v8a"
             else
               apk_dir="app/build/outputs/apk/release"
-              apk_file_v8a=$(find "$apk_dir" -name 'OShin_arm64-v8a_v*.apk')
+              echo "查找Release APK在目录: $apk_dir"
+              
+              # 列出目录内容
+              echo "目录内容:"
+              find "$apk_dir" -type f -name "*.apk" | while read file; do
+                echo "找到文件: $file"
+              done
+              
+              # 尝试多种可能的文件名模式
+              apk_file_v8a=$(find "$apk_dir" -type f -name "OShin_arm64-v8a_v*.apk" | head -1)
+              if [ -z "$apk_file_v8a" ]; then
+                echo "未找到 OShin_arm64-v8a_v*.apk，尝试其他模式..."
+                apk_file_v8a=$(find "$apk_dir" -type f -name "*arm64-v8a*.apk" | head -1)
+              fi
+              if [ -z "$apk_file_v8a" ]; then
+                echo "未找到 *arm64-v8a*.apk，尝试第一个.apk文件..."
+                apk_file_v8a=$(find "$apk_dir" -type f -name "*.apk" | head -1)
+              fi
+              echo "选择的APK文件: $apk_file_v8a"
             fi
             
+            # 检查是否找到APK文件
             if [ -z "$apk_file_v8a" ]; then
-              echo "::error::APK not found!"
+              echo "::error::APK not found in $apk_dir!"
+              echo "尝试列出所有可能的APK位置..."
+              find app/build -name "*.apk" -type f
               exit 1
             fi
+            
+            # 确保APK文件存在
+            if [ ! -f "$apk_file_v8a" ]; then
+              echo "::error::APK file does not exist: $apk_file_v8a"
+              exit 1
+            fi
+            
             echo "APK_FILE_V8A=$apk_file_v8a" >> $GITHUB_ENV
+            echo "找到APK文件: $apk_file_v8a"
           
             # 如果用户提供了自定义标签名，使用它
             if [ -n "${{ github.event.inputs.tag_name }}" ]; then
@@ -108,12 +148,17 @@ jobs:
                 apk_filename=$(basename "$apk_file_v8a")
                 echo "Extracted filename: $apk_filename"
               
-                # 移除前缀 "OShin_arm64-v8a_"
-                version_with_suffix="${apk_filename#OShin_arm64-v8a_}"
-                echo "Version with suffix: $version_with_suffix"
-              
-                # 移除后缀 ".apk" 得到最终的版本字符串
-                version_string="${version_with_suffix%.apk}"
+                # 尝试从文件名中提取版本号（多种模式）
+                version_string="v1.0.0" # 默认版本
+                
+                # 模式1: OShin_arm64-v8a_v1.0.0.apk
+                if [[ "$apk_filename" =~ OShin_arm64-v8a_(v.*)\.apk ]]; then
+                  version_string="${BASH_REMATCH[1]}"
+                # 模式2: app-arm64-v8a-release.apk 或类似格式
+                elif [[ "$apk_filename" =~ app.*\.apk ]]; then
+                  version_string="release-$(date +"%Y%m%d_%H%M%S")"
+                fi
+                
                 echo "Extracted version string: $version_string"
               
                 # 设置 tag_name 输出为提取的版本字符串
@@ -125,21 +170,26 @@ jobs:
             # 计算 SHA
             sha_v8a=$(sha256sum "$apk_file_v8a" | awk '{print $1}')
             echo "sha_v8a=$sha_v8a" >> $GITHUB_OUTPUT
+            echo "SHA256: $sha_v8a"
           
             # 生成摘要
             {
               echo "### OShin Build Success :rocket:"
               echo ""
+              echo "**Build Type:** ${{ github.event.inputs.build_type }}"
+              echo "**APK File:** $(basename "$apk_file_v8a")"
+              echo "**APK Path:** $apk_file_v8a"
+              echo ""
               echo "| Architecture | SHA256 Hash |"
               echo "|:---|:---|"
               echo "| arm64-v8a | \`$sha_v8a\` |"
-              echo ""
-              echo "**Build Type:** ${{ github.event.inputs.build_type }}"
               echo ""
               echo "**Triggered by:** ${{ github.actor }}"
               echo ""
               echo "**Commit:** [${{ github.sha }}](https://github.com/${{ github.repository }}/commit/${{ github.sha }})"
             } >> $GITHUB_STEP_SUMMARY
+            
+            echo "=== APK准备完成 ==="
 
       # 第 6 步：上传构建产物
       - name: Upload Build Artifacts
